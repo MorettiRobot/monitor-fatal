@@ -1,0 +1,35 @@
+name: Monitor Tucurui
+
+on:
+  schedule:
+    - cron: "0 */2 * * *" # Roda a cada 2 horas
+  workflow_dispatch: # Permite rodar manualmente
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Permite que o bot salve o arquivo JSON de volta
+
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Instalar dependências
+        run: pip install beautifulsoup4 cloudscraper requests
+
+      - name: Rodar Script
+        run: python bot.py
+
+      - name: Salvar Memória (Commit JSON)
+        run: |
+          git config --global user.name "GitHub Action"
+          git config --global user.email "action@github.com"
+          git add modelos_conhecidas.json
+          git commit -m "Atualizando base de modelos [skip ci]" || exit 0
+          git push
