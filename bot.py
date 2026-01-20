@@ -1,97 +1,161 @@
 from bs4 import BeautifulSoup
 from cloudscraper import CloudScraper
 import requests
-import time
 import json
 import os
+from datetime import datetime
 
 class AlertFatal:
     def __init__(self):
-        # Puxa os dados das Secrets do GitHub para segurança
         self.token = os.environ.get('TELEGRAM_TOKEN')
-        self.id = os.environ.get('TELEGRAM_ID')
+        self.chat_id = os.environ.get('TELEGRAM_ID')
         self.site = 'https://fatalmodel.com/acompanhantes-tucurui-pa'
-        self.arquivo_db = 'modelos_conhecidas.json'
+        self.db_file = 'modelos_conhecidas.json'
+        self.AUSENCIAS_MAX = 2  # confirma saída após 2 execuções
 
+    # -----------------------------
+    # Persistência
+    # -----------------------------
     def carregar_memoria(self):
-        if os.path.exists(self.arquivo_db):
+        if os.path.exists(self.db_file):
             try:
-                with open(self.arquivo_db, 'r') as f:
+                with open(self.db_file, 'r') as f:
                     return json.load(f)
             except:
-                return []
-        return []
+                return {}
+        return {}
 
-    def salvar_memoria(self, lista):
-        with open(self.arquivo_db, 'w') as f:
-            json.dump(lista, f)
+    def salvar_memoria(self, dados):
+        with open(self.db_file, 'w') as f:
+            json.dump(dados, f, indent=2, ensure_ascii=False)
 
-    def buscar_dados(self):
-        scraper = CloudScraper.create_scraper()
-        try:
-            req = scraper.get(self.site)
-            if req.status_code != 200:
-                print(f"Erro no site: {req.status_code}")
-                return None
-            
-            soup = BeautifulSoup(req.text, 'html.parser')
-            cards = soup.find_all('div', class_='shadow-listing-cards')
-            
-            modelos_atuais = {}
-            for card in cards:
-                local_div = card.find('div', class_='truncate')
-                local = local_div.get_text(strip=True) if local_div else ""
-                
-                if "Tucuruí" in local:
-                    nome = card.find('h2').get_text(strip=True) if card.find('h2') else "N/A"
-                    preco_div = card.find('div', class_='price-list__value')
-                    preco = preco_div.get_text(strip=True) if preco_div else "S/V"
-                    link = card.find('a', href=True)['href']
-                    if link.startswith('/'): link = "https://fatalmodel.com" + link
-                    
-                    modelos_atuais[nome] = {"preco": preco, "link": link}
-            
-            return modelos_atuais
-        except Exception as e:
-            print(f"Erro: {e}")
-            return None
-
+    # -----------------------------
+    # Telegram
+    # -----------------------------
     def enviar_telegram(self, texto):
         url = f"https://api.telegram.org/bot{self.token}/sendMessage"
         payload = {
-            'chat_id': self.id, 
-            'text': texto, 
-            'parse_mode': 'Markdown', 
+            'chat_id': self.chat_id,
+            'text': texto,
+            'parse_mode': 'Markdown',
             'disable_web_page_preview': True
         }
-        requests.post(url, data=payload)
+        requests.post(url, data=payload, timeout=10)
 
+    # -----------------------------
+    # Scraping
+    # -----------------------------
+    def buscar_modelos(self):
+        scraper = CloudScraper.create_scraper()
+        req = scraper.get(self.site, timeout=20)
+
+        if req.status_code != 200:
+            raise Exception(f"Erro HTTP {req.status_code}")
+
+        soup = BeautifulSoup(req.text, 'html.parser')
+        cards = soup.find_all('div', class_='shadow-listing-cards')
+
+        modelos = {}
+
+        for card in cards:
+            local_div = card.find('div', class_='truncate')
+            local = local_div.get_text(strip=True) if local_div else ""
+
+            if "Tucuruí" not in local:
+                continue
+
+            nome = card.find('h2').get_text(strip=True)
+            preco_div = card.find('div', class_='price-list__value')
+            preco = preco_div.get_text(strip=True) if preco_div else "S/V"
+
+            link = card.find('a', href=True)['href']
+            if link.startswith('/'):
+                link = "https://fatalmodel.com" + link
+
+            modelos[nome] = {
+                "preco": preco,
+                "link": link
+            }
+
+        return modelos
+
+    # -----------------------------
+    # Execução principal
+    # -----------------------------
     def executar(self):
-        print("Iniciando verificação...")
-        dados_novos = self.buscar_dados()
-        if dados_novos is None: return
+        agora = datetime.now().strftime('%d/%m %H:%M')
+        self.enviar_telegram(f"🟢 *Bot Fatal Tucuruí rodando*\n⏰ {agora}")
 
-        nomes_novos = list(dados_novos.keys())
-        nomes_antigos = self.carregar_memoria()
+        memoria = self.carregar_memoria()
+        modelos_atuais = self.buscar_modelos()
 
-        entraram = [n for n in nomes_novos if n not in nomes_antigos]
-        sairam = [n for n in nomes_antigos if n not in nomes_novos]
+        nova_memoria = {}
 
-        for nome in entraram:
-            m = dados_novos[nome]
-            msg = f"✅ **NOVA MODELO EM TUCURUÍ!**\n\n👤 {nome}\n💰 {m['preco']}\n🔗 {m['link']}"
-            self.enviar_telegram(msg)
+        # -----------------------------
+        # Verifica modelos presentes
+        # -----------------------------
+        for nome, dados in modelos_atuais.items():
 
-        for nome in sairam:
-            msg = f"❌ **SAIU DO SITE:**\n\n👤 {nome} não está mais na listagem."
-            self.enviar_telegram(msg)
+            if nome not in memoria:
+                # NOVA MODELO
+                msg = (
+                    f"✅ *NOVA MODELO EM TUCURUÍ*\n\n"
+                    f"👤 {nome}\n"
+                    f"💰 {dados['preco']}\n"
+                    f"🔗 {dados['link']}"
+                )
+                self.enviar_telegram(msg)
 
-        if entraram or sairam:
-            self.salvar_memoria(nomes_novos)
-            print("Alterações detectadas e salvas.")
-        else:
-            print("Nenhuma alteração.")
+                nova_memoria[nome] = {"ausencias": 0, "ativa": True}
+                continue
 
+            # Modelo já conhecida
+            estado_antigo = memoria[nome]
+
+            if not estado_antigo["ativa"]:
+                # MODELO VOLTOU
+                msg = (
+                    f"🔄 *MODELO DE VOLTA*\n\n"
+                    f"👤 {nome}\n"
+                    f"💰 {dados['preco']}\n"
+                    f"🔗 {dados['link']}"
+                )
+                self.enviar_telegram(msg)
+
+            nova_memoria[nome] = {"ausencias": 0, "ativa": True}
+
+        # -----------------------------
+        # Verifica modelos ausentes
+        # -----------------------------
+        for nome, estado in memoria.items():
+            if nome not in modelos_atuais:
+                faltas = estado["ausencias"] + 1
+
+                if estado["ativa"] and faltas >= self.AUSENCIAS_MAX:
+                    # SAÍDA CONFIRMADA
+                    msg = (
+                        f"❌ *MODELO AUSENTE (confirmado)*\n\n"
+                        f"👤 {nome}\n"
+                        f"⏳ Ausente há ~{faltas * 50} minutos"
+                    )
+                    self.enviar_telegram(msg)
+
+                    nova_memoria[nome] = {
+                        "ausencias": faltas,
+                        "ativa": False
+                    }
+                else:
+                    nova_memoria[nome] = {
+                        "ausencias": faltas,
+                        "ativa": estado["ativa"]
+                    }
+
+        self.salvar_memoria(nova_memoria)
+        print("Execução concluída com sucesso.")
+
+# -----------------------------
+# Start
+# -----------------------------
 if __name__ == "__main__":
     bot = AlertFatal()
     bot.executar()
