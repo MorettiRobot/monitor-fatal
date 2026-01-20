@@ -7,16 +7,19 @@ import os
 
 class AlertFatal:
     def __init__(self):
-        # DICA: No futuro, use os.environ.get('TELEGRAM_TOKEN') por segurança
-        self.token = '8212331492:AAE3e5-PUAqHk2YZbTWu3Fca44n-O_VcduQ'
-        self.id = '5255755160'
+        # Puxa os dados das Secrets do GitHub para segurança
+        self.token = os.environ.get('TELEGRAM_TOKEN')
+        self.id = os.environ.get('TELEGRAM_ID')
         self.site = 'https://fatalmodel.com/acompanhantes-tucurui-pa'
         self.arquivo_db = 'modelos_conhecidas.json'
 
     def carregar_memoria(self):
         if os.path.exists(self.arquivo_db):
-            with open(self.arquivo_db, 'r') as f:
-                return json.load(f)
+            try:
+                with open(self.arquivo_db, 'r') as f:
+                    return json.load(f)
+            except:
+                return []
         return []
 
     def salvar_memoria(self, lista):
@@ -28,7 +31,7 @@ class AlertFatal:
         try:
             req = scraper.get(self.site)
             if req.status_code != 200:
-                self.enviar_telegram(f"⚠️ Erro ao acessar site: Status {req.status_code}")
+                print(f"Erro no site: {req.status_code}")
                 return None
             
             soup = BeautifulSoup(req.text, 'html.parser')
@@ -50,16 +53,21 @@ class AlertFatal:
             
             return modelos_atuais
         except Exception as e:
-            self.enviar_telegram(f"❌ Erro crítico no scraping: {e}")
+            print(f"Erro: {e}")
             return None
 
     def enviar_telegram(self, texto):
         url = f"https://api.telegram.org/bot{self.token}/sendMessage"
-        payload = {'chat_id': self.id, 'text': texto, 'parse_mode': 'Markdown', 'disable_web_page_preview': True}
+        payload = {
+            'chat_id': self.id, 
+            'text': texto, 
+            'parse_mode': 'Markdown', 
+            'disable_web_page_preview': True
+        }
         requests.post(url, data=payload)
 
     def executar(self):
-        print(f"[{time.strftime('%H:%M:%S')}] Verificando site...")
+        print("Iniciando verificação...")
         dados_novos = self.buscar_dados()
         if dados_novos is None: return
 
@@ -80,9 +88,9 @@ class AlertFatal:
 
         if entraram or sairam:
             self.salvar_memoria(nomes_novos)
-        
-        # Mensagem de log para você saber que o bot rodou com sucesso no GitHub
-        print("Execução finalizada com sucesso.")
+            print("Alterações detectadas e salvas.")
+        else:
+            print("Nenhuma alteração.")
 
 if __name__ == "__main__":
     bot = AlertFatal()
