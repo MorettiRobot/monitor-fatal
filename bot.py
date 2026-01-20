@@ -4,7 +4,6 @@ import requests
 import json
 import os
 from datetime import datetime
-import re
 
 class AlertFatal:
     def __init__(self):
@@ -12,19 +11,22 @@ class AlertFatal:
         self.chat_id = os.environ.get("TELEGRAM_ID")
         self.site = "https://fatalmodel.com/acompanhantes-tucurui-pa"
         self.db_file = "modelos_conhecidas.json"
-        self.AUSENCIAS_MAX = 2
+        self.AUSENCIAS_MAX = 2  # confirma saída após 2 execuções
 
     # -----------------------------
     # Persistência
     # -----------------------------
     def carregar_memoria(self):
         if os.path.exists(self.db_file):
-            with open(self.db_file, "r") as f:
-                return json.load(f)
+            try:
+                with open(self.db_file, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except:
+                return {}
         return {}
 
     def salvar_memoria(self, dados):
-        with open(self.db_file, "w") as f:
+        with open(self.db_file, "w", encoding="utf-8") as f:
             json.dump(dados, f, indent=2, ensure_ascii=False)
 
     # -----------------------------
@@ -40,7 +42,7 @@ class AlertFatal:
         requests.post(url, data=payload, timeout=10)
 
     # -----------------------------
-    # Scraping DEFINITIVO
+    # Scraping (SOMENTE Tucuruí)
     # -----------------------------
     def buscar_modelos(self):
         scraper = CloudScraper.create_scraper()
@@ -50,70 +52,94 @@ class AlertFatal:
 
         modelos = {}
 
-        for a in soup.find_all("a", href=True):
+        cards = soup.find_all("div", class_="shadow-listing-cards")
+
+        for card in cards:
+            texto_card = card.get_text(" ", strip=True)
+
+            # 🔒 garante Tucuruí
+            if "Tucuruí" not in texto_card:
+                continue
+
+            a = card.find("a", href=True)
+            if not a:
+                continue
+
             href = a["href"]
+            if "/acompanhante/" not in href:
+                continue
 
-            if "/acompanhante/" in href:
-                link = href
-                if link.startswith("/"):
-                    link = "https://fatalmodel.com" + link
+            link = href
+            if link.startswith("/"):
+                link = "https://fatalmodel.com" + link
 
-                # extrai nome do slug
-                slug = link.rstrip("/").split("/")[-1]
-                nome = slug.replace("-", " ").title()
+            slug = link.rstrip("/").split("/")[-1]
+            nome = slug.replace("-", " ").title()
 
-                modelos[nome] = {
-                    "link": link
-                }
+            modelos[nome] = {
+                "link": link
+            }
 
         return modelos
 
     # -----------------------------
-    # Execução
+    # Execução principal
     # -----------------------------
     def executar(self):
         agora = datetime.now().strftime("%d/%m %H:%M")
-        self.enviar_telegram(f"🟢 Monitor Fatal ativo\n⏰ {agora}")
+        self.enviar_telegram(f"🟢 Monitor Fatal Tucuruí ativo\n⏰ {agora}")
 
         memoria = self.carregar_memoria()
         modelos_atuais = self.buscar_modelos()
 
         print(f"MODELOS CAPTURADAS: {len(modelos_atuais)}")
 
-        # 🔹 envia lista completa
-        lista = "\n".join(f"• {n}" for n in sorted(modelos_atuais))
-        self.enviar_telegram(
-            f"📋 MODELOS EM TUCURUÍ ({len(modelos_atuais)})\n\n{lista}"
-        )
+        # 📋 Lista completa (auditoria)
+        if modelos_atuais:
+            lista = "\n".join(f"• {n}" for n in sorted(modelos_atuais))
+            self.enviar_telegram(
+                f"📋 MODELOS EM TUCURUÍ ({len(modelos_atuais)})\n\n{lista}"
+            )
+        else:
+            self.enviar_telegram("⚠️ Nenhuma modelo capturada (verificar site)")
 
         nova_memoria = {}
 
-        # novas / retornos
+        # 🔹 Novas e retornos
         for nome in modelos_atuais:
             if nome not in memoria:
-                self.enviar_telegram(f"✅ NOVA MODELO\n👤 {nome}")
+                self.enviar_telegram(f"✅ NOVA MODELO EM TUCURUÍ\n👤 {nome}")
                 nova_memoria[nome] = {"ausencias": 0, "ativa": True}
             else:
                 if not memoria[nome]["ativa"]:
                     self.enviar_telegram(f"🔄 MODELO DE VOLTA\n👤 {nome}")
                 nova_memoria[nome] = {"ausencias": 0, "ativa": True}
 
-        # ausentes
+        # 🔻 Ausentes
         for nome, estado in memoria.items():
             if nome not in modelos_atuais:
                 faltas = estado["ausencias"] + 1
+
                 if estado["ativa"] and faltas >= self.AUSENCIAS_MAX:
-                    self.enviar_telegram(f"❌ MODELO AUSENTE\n👤 {nome}")
-                    nova_memoria[nome] = {"ausencias": faltas, "ativa": False}
+                    self.enviar_telegram(
+                        f"❌ MODELO AUSENTE (confirmado)\n👤 {nome}"
+                    )
+                    nova_memoria[nome] = {
+                        "ausencias": faltas,
+                        "ativa": False
+                    }
                 else:
                     nova_memoria[nome] = {
                         "ausencias": faltas,
                         "ativa": estado["ativa"]
                     }
 
+        # garante criação do JSON
         self.salvar_memoria(nova_memoria)
-        print("Execução concluída.")
+        print("Execução concluída com sucesso.")
 
+# -----------------------------
+# Start
 # -----------------------------
 if __name__ == "__main__":
     AlertFatal().executar()
