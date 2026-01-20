@@ -1,8 +1,8 @@
-name: Monitor Tucuruí ~50min
+name: Monitor Fatal Tucuruí
 
 on:
   schedule:
-    - cron: "7-57/50 * * * *"
+    - cron: "*/50 * * * *"
   workflow_dispatch:
 
 jobs:
@@ -34,5 +34,5 @@ jobs:
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
           git add modelos_conhecidas.json
-          git commit -m "Auto-update database [skip ci]" || exit 0
+          git diff --quiet && echo "Sem alterações" || git commit -m "Auto-update database [skip ci]"
           git push
