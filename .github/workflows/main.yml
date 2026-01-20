@@ -1,9 +1,9 @@
-name: Monitor Tucurui 2h
+name: Monitor Tucuruí ~50min
 
 on:
   schedule:
-    - cron: "0 */2 * * *" # Roda exatamente a cada 2 horas
-  workflow_dispatch: # Permite que você clique no botão para rodar agora
+    - cron: "7-57/50 * * * *"
+  workflow_dispatch:
 
 jobs:
   build:
