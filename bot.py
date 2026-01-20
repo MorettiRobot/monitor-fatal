@@ -5,11 +5,15 @@ import json
 import os
 from datetime import datetime
 
+
 class AlertFatal:
     def __init__(self):
         self.token = os.environ.get('TELEGRAM_TOKEN')
         self.chat_id = os.environ.get('TELEGRAM_ID')
+
+        # Página já filtrada por Tucuruí
         self.site = 'https://fatalmodel.com/acompanhantes-tucurui-pa'
+
         self.db_file = 'modelos_conhecidas.json'
         self.AUSENCIAS_MAX = 2  # confirma saída após 2 execuções
 
@@ -19,14 +23,14 @@ class AlertFatal:
     def carregar_memoria(self):
         if os.path.exists(self.db_file):
             try:
-                with open(self.db_file, 'r') as f:
+                with open(self.db_file, 'r', encoding='utf-8') as f:
                     return json.load(f)
             except:
                 return {}
         return {}
 
     def salvar_memoria(self, dados):
-        with open(self.db_file, 'w') as f:
+        with open(self.db_file, 'w', encoding='utf-8') as f:
             json.dump(dados, f, indent=2, ensure_ascii=False)
 
     # -----------------------------
@@ -47,28 +51,40 @@ class AlertFatal:
     # -----------------------------
     def buscar_modelos(self):
         scraper = CloudScraper.create_scraper()
-        req = scraper.get(self.site, timeout=20)
+        response = scraper.get(self.site, timeout=20)
 
-        if req.status_code != 200:
-            raise Exception(f"Erro HTTP {req.status_code}")
+        if response.status_code != 200:
+            raise Exception(f"Erro HTTP {response.status_code}")
 
-        soup = BeautifulSoup(req.text, 'html.parser')
+        soup = BeautifulSoup(response.text, 'html.parser')
+
+        # Cada modelo está dentro desse card
         cards = soup.find_all('div', class_='shadow-listing-cards')
 
         modelos = {}
 
         for card in cards:
-            local_div = card.find('div', class_='truncate')
-            local = local_div.get_text(strip=True) if local_div else ""
+            # Nome
+            nome_tag = card.find('h2')
+            if not nome_tag:
+                continue
+            nome = nome_tag.get_text(strip=True)
+
+            # Localização (confirma Tucuruí)
+            local_tag = card.find('div', class_='truncate')
+            local = local_tag.get_text(strip=True) if local_tag else ""
 
             if "Tucuruí" not in local:
                 continue
 
-            nome = card.find('h2').get_text(strip=True)
-            preco_div = card.find('div', class_='price-list__value')
-            preco = preco_div.get_text(strip=True) if preco_div else "S/V"
+            # Preço
+            preco_tag = card.find('div', class_='price-list__value')
+            preco = preco_tag.get_text(strip=True) if preco_tag else "S/V"
 
-            link = card.find('a', href=True)['href']
+            # Link
+            link_tag = card.find('a', href=True)
+            link = link_tag['href'] if link_tag else ""
+
             if link.startswith('/'):
                 link = "https://fatalmodel.com" + link
 
@@ -84,7 +100,9 @@ class AlertFatal:
     # -----------------------------
     def executar(self):
         agora = datetime.now().strftime('%d/%m %H:%M')
-        self.enviar_telegram(f"🟢 *Bot Fatal Tucuruí rodando*\n⏰ {agora}")
+        self.enviar_telegram(
+            f"🟢 *Bot Fatal Tucuruí rodando*\n⏰ {agora}"
+        )
 
         memoria = self.carregar_memoria()
         modelos_atuais = self.buscar_modelos()
@@ -92,12 +110,11 @@ class AlertFatal:
         nova_memoria = {}
 
         # -----------------------------
-        # Verifica modelos presentes
+        # Modelos presentes
         # -----------------------------
         for nome, dados in modelos_atuais.items():
 
             if nome not in memoria:
-                # NOVA MODELO
                 msg = (
                     f"✅ *NOVA MODELO EM TUCURUÍ*\n\n"
                     f"👤 {nome}\n"
@@ -109,11 +126,9 @@ class AlertFatal:
                 nova_memoria[nome] = {"ausencias": 0, "ativa": True}
                 continue
 
-            # Modelo já conhecida
             estado_antigo = memoria[nome]
 
             if not estado_antigo["ativa"]:
-                # MODELO VOLTOU
                 msg = (
                     f"🔄 *MODELO DE VOLTA*\n\n"
                     f"👤 {nome}\n"
@@ -125,14 +140,13 @@ class AlertFatal:
             nova_memoria[nome] = {"ausencias": 0, "ativa": True}
 
         # -----------------------------
-        # Verifica modelos ausentes
+        # Modelos ausentes
         # -----------------------------
         for nome, estado in memoria.items():
             if nome not in modelos_atuais:
                 faltas = estado["ausencias"] + 1
 
                 if estado["ativa"] and faltas >= self.AUSENCIAS_MAX:
-                    # SAÍDA CONFIRMADA
                     msg = (
                         f"❌ *MODELO AUSENTE (confirmado)*\n\n"
                         f"👤 {nome}\n"
@@ -152,6 +166,7 @@ class AlertFatal:
 
         self.salvar_memoria(nova_memoria)
         print("Execução concluída com sucesso.")
+
 
 # -----------------------------
 # Start
